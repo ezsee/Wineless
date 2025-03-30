@@ -1,0 +1,624 @@
+local TweenService = game:GetService("TweenService")
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TeamsService = game:GetService("Teams")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+local IMAGE_ID = "rbxassetid://74542140065957"
+local MESSAGE_DURATION = 1.5
+local TWEEN_TIME = 1
+local FRAME_WIDTH = 250
+local FRAME_HEIGHT = 80
+local IMAGE_SIZE = 60
+local FOV_RADIUS = 125
+local AIM_KEY = Enum.KeyCode.E
+local SELF_DESTRUCT_KEY = Enum.KeyCode.RightControl
+local PANEL_TOGGLE_KEY = Enum.KeyCode.RightShift
+local PANEL_TOGGLE_TEAM_KEY = Enum.KeyCode.RightAlt
+local TARGET_PART_NAME = "Torso"
+local SMOOTHNESS = 0.07
+local SmoothnessEnabled = true
+local NPC_ENABLED = false
+local PREDICTION_ENABLED = false
+local PREDICTION_OFFSET = 1
+local MANUAL_OVERRIDE_THRESHOLD = 10000
+local FOV_COLOR = Color3.fromRGB(255, 255, 0)
+local effectiveSmoothness = SMOOTHNESS
+if effectiveSmoothness <= 0 then
+	effectiveSmoothness = 1
+end
+local ignoreList = {}
+local ignoreTeams = {}
+local ignorePanelGui = Instance.new("ScreenGui")
+ignorePanelGui.Name = "IgnorePanelGui"
+ignorePanelGui.ResetOnSpawn = false
+ignorePanelGui.Parent = playerGui
+local DEFAULT_PANEL_POS = UDim2.new(0.5, -100, 0, 10)
+local OFFSCREEN_PANEL_POS = UDim2.new(0.5, -100, -0.2, 10)
+local PANEL_SIZE = UDim2.new(0, 200, 0, 40)
+local ignorePanel = Instance.new("Frame")
+ignorePanel.Name = "IgnorePanel"
+ignorePanel.Size = PANEL_SIZE
+ignorePanel.Position = DEFAULT_PANEL_POS
+ignorePanel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+ignorePanel.BackgroundTransparency = 0.2
+ignorePanel.Active = true
+ignorePanel.Selectable = true
+ignorePanel.Parent = ignorePanelGui
+local panelCorner = Instance.new("UICorner")
+panelCorner.CornerRadius = UDim.new(0, 5)
+panelCorner.Parent = ignorePanel
+local panelImage = Instance.new("ImageLabel")
+panelImage.Name = "Logo"
+panelImage.Size = UDim2.new(0, 30, 0, 30)
+panelImage.Position = UDim2.new(0, 5, 0, 5)
+panelImage.Image = IMAGE_ID
+panelImage.BackgroundTransparency = 1
+panelImage.Parent = ignorePanel
+local panelTitle = Instance.new("TextLabel")
+panelTitle.Name = "TitleLabel"
+panelTitle.Size = UDim2.new(1, -40, 1, 0)
+panelTitle.Position = UDim2.new(0, 40, 0, 0)
+panelTitle.BackgroundTransparency = 1
+panelTitle.Text = "Ignore players"
+panelTitle.TextColor3 = Color3.new(1, 1, 1)
+panelTitle.TextScaled = true
+panelTitle.Font = Enum.Font.SourceSansBold
+panelTitle.Parent = ignorePanel
+local ignoreListFrame = Instance.new("ScrollingFrame")
+ignoreListFrame.Name = "IgnoreListFrame"
+ignoreListFrame.Size = UDim2.new(1, 0, 0, 0)
+ignoreListFrame.Position = UDim2.new(0, 0, 1, 0)
+ignoreListFrame.BackgroundTransparency = 1
+ignoreListFrame.ScrollBarThickness = 4
+ignoreListFrame.Visible = false
+ignoreListFrame.Parent = ignorePanel
+local listLayout = Instance.new("UIListLayout", ignoreListFrame)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+local function refreshIgnoreList()
+	for _, child in ipairs(ignoreListFrame:GetChildren()) do
+		if child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+	local players = Players:GetPlayers()
+	local entryCount = 0
+	for _, player in ipairs(players) do
+		if player ~= LocalPlayer then
+			entryCount = entryCount + 1
+			local entry = Instance.new("TextButton")
+			entry.Name = player.Name
+			entry.Size = UDim2.new(1, 0, 0, 25)
+			entry.BackgroundTransparency = 0.5
+			entry.BorderSizePixel = 0
+			entry.Text = player.DisplayName
+			entry.TextScaled = true
+			entry.Font = Enum.Font.SourceSans
+			if ignoreList[player] then
+				entry.TextColor3 = Color3.new(0, 0, 0)
+			else
+				entry.TextColor3 = Color3.new(1, 1, 1)
+			end
+			entry.Parent = ignoreListFrame
+			entry.MouseButton1Click:Connect(function()
+				ignoreList[player] = not ignoreList[player]
+				if ignoreList[player] then
+					entry.TextColor3 = Color3.new(0, 0, 0)
+				else
+					entry.TextColor3 = Color3.new(1, 1, 1)
+				end
+			end)
+		end
+	end
+	ignoreListFrame.CanvasSize = UDim2.new(0, 0, 0, entryCount * 25)
+	local targetHeight = math.min(entryCount, 8) * 25
+	local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local tween = TweenService:Create(ignoreListFrame, tweenInfo, {Size = UDim2.new(1, 0, 0, targetHeight)})
+	tween:Play()
+end
+local isHovering = false
+
+local function expandIgnoreList()
+	if ignoreListFrame.Visible then return end
+	ignoreListFrame.Visible = true
+	refreshIgnoreList()
+end
+
+local function collapseIgnoreList()
+	local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local tween = TweenService:Create(ignoreListFrame, tweenInfo, {Size = UDim2.new(1, 0, 0, 0)})
+	tween:Play()
+	tween.Completed:Connect(function()
+		ignoreListFrame.Visible = false
+	end)
+end
+
+ignorePanel.MouseEnter:Connect(function()
+	isHovering = true
+	expandIgnoreList()
+end)
+ignorePanel.MouseLeave:Connect(function()
+	delay(0.1, function()
+		if not isHovering then
+			collapseIgnoreList()
+		end
+	end)
+end)
+ignoreListFrame.MouseEnter:Connect(function()
+	isHovering = true
+	refreshIgnoreList()
+end)
+ignoreListFrame.MouseLeave:Connect(function()
+	isHovering = false
+	collapseIgnoreList()
+end)
+
+Players.PlayerAdded:Connect(function(player)
+	delay(0.2, function()
+		if ignoreListFrame.Visible then
+			refreshIgnoreList()
+		end
+	end)
+end)
+Players.PlayerRemoving:Connect(function(player)
+	if ignoreListFrame.Visible then
+		refreshIgnoreList()
+	end
+end)
+local dragging = false
+local dragStart, startPos
+ignorePanel.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		dragging = true
+		dragStart = input.Position
+		startPos = ignorePanel.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				dragging = false
+			end
+		end)
+	end
+end)
+ignorePanel.InputChanged:Connect(function(input)
+	if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - dragStart
+		ignorePanel.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+	end
+end)
+local ignorePanelOpen = true
+local function toggleIgnorePanel(isVisible)
+	local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local targetTransparency = isVisible and 0.2 or 1
+	local targetPosition = isVisible and DEFAULT_PANEL_POS or OFFSCREEN_PANEL_POS
+
+	local tweenTransparency = TweenService:Create(ignorePanel, tweenInfo, {BackgroundTransparency = targetTransparency})
+	local tweenPosition = TweenService:Create(ignorePanel, tweenInfo, {Position = targetPosition})
+
+	tweenTransparency:Play()
+	tweenPosition:Play()
+end
+local DEFAULT_TEAM_PANEL_POS = UDim2.new(0.5, 120, 0, 10)
+local OFFSCREEN_TEAM_PANEL_POS = UDim2.new(0.5, 120, -0.2, 10)
+
+local teamPanel = Instance.new("Frame")
+teamPanel.Name = "TeamIgnorePanel"
+teamPanel.Size = PANEL_SIZE
+teamPanel.Position = DEFAULT_TEAM_PANEL_POS
+teamPanel.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+teamPanel.BackgroundTransparency = 0.2
+teamPanel.Active = true
+teamPanel.Selectable = true
+teamPanel.Parent = ignorePanelGui
+local teamPanelCorner = Instance.new("UICorner")
+teamPanelCorner.CornerRadius = UDim.new(0, 5)
+teamPanelCorner.Parent = teamPanel
+local teamPanelImage = Instance.new("ImageLabel")
+teamPanelImage.Name = "Logo"
+teamPanelImage.Size = UDim2.new(0, 30, 0, 30)
+teamPanelImage.Position = UDim2.new(0, 5, 0, 5)
+teamPanelImage.Image = IMAGE_ID
+teamPanelImage.BackgroundTransparency = 1
+teamPanelImage.Parent = teamPanel
+local teamPanelTitle = Instance.new("TextLabel")
+teamPanelTitle.Name = "TitleLabel"
+teamPanelTitle.Size = UDim2.new(1, -40, 1, 0)
+teamPanelTitle.Position = UDim2.new(0, 40, 0, 0)
+teamPanelTitle.BackgroundTransparency = 1
+teamPanelTitle.Text = "Ignore teams"
+teamPanelTitle.TextColor3 = Color3.new(1, 1, 1)
+teamPanelTitle.TextScaled = true
+teamPanelTitle.Font = Enum.Font.SourceSansBold
+teamPanelTitle.Parent = teamPanel
+local teamListFrame = Instance.new("ScrollingFrame")
+teamListFrame.Name = "TeamListFrame"
+teamListFrame.Size = UDim2.new(1, 0, 0, 0)
+teamListFrame.Position = UDim2.new(0, 0, 1, 0)
+teamListFrame.BackgroundTransparency = 1
+teamListFrame.ScrollBarThickness = 4
+teamListFrame.Visible = false
+teamListFrame.Parent = teamPanel
+local teamListLayout = Instance.new("UIListLayout", teamListFrame)
+teamListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+local function refreshTeamList()
+	for _, child in ipairs(teamListFrame:GetChildren()) do
+		if child:IsA("TextButton") then
+			child:Destroy()
+		end
+	end
+	local teams = TeamsService:GetTeams()
+	local entryCount = 0
+	for _, team in ipairs(teams) do
+		entryCount = entryCount + 1
+		local entry = Instance.new("TextButton")
+		entry.Name = team.Name
+		entry.Size = UDim2.new(1, 0, 0, 25)
+		entry.BackgroundTransparency = 0.5
+		entry.BorderSizePixel = 0
+		entry.Text = team.Name
+		entry.TextScaled = true
+		entry.Font = Enum.Font.SourceSans
+		if ignoreTeams[team] then
+			entry.TextColor3 = Color3.new(0, 0, 0)
+		else
+			entry.TextColor3 = Color3.new(1, 1, 1)
+		end
+		entry.Parent = teamListFrame
+		entry.MouseButton1Click:Connect(function()
+			ignoreTeams[team] = not ignoreTeams[team]
+			if ignoreTeams[team] then
+				entry.TextColor3 = Color3.new(0, 0, 0)
+			else
+				entry.TextColor3 = Color3.new(1, 1, 1)
+			end
+		end)
+	end
+	teamListFrame.CanvasSize = UDim2.new(0, 0, 0, entryCount * 25)
+	local targetHeight = math.min(entryCount, 8) * 25
+	local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local tween = TweenService:Create(teamListFrame, tweenInfo, {Size = UDim2.new(1, 0, 0, targetHeight)})
+	tween:Play()
+end
+local teamHovering = false
+local function expandTeamList()
+	if teamListFrame.Visible then return end
+	teamListFrame.Visible = true
+	refreshTeamList()
+end
+local function collapseTeamList()
+	local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local tween = TweenService:Create(teamListFrame, tweenInfo, {Size = UDim2.new(1, 0, 0, 0)})
+	tween:Play()
+	tween.Completed:Connect(function()
+		teamListFrame.Visible = false
+	end)
+end
+teamPanel.MouseEnter:Connect(function()
+	teamHovering = true
+	expandTeamList()
+end)
+teamPanel.MouseLeave:Connect(function()
+	delay(0.1, function()
+		if not teamHovering then
+			collapseTeamList()
+		end
+	end)
+end)
+teamListFrame.MouseEnter:Connect(function()
+	teamHovering = true
+	refreshTeamList()
+end)
+teamListFrame.MouseLeave:Connect(function()
+	teamHovering = false
+	collapseTeamList()
+end)
+local teamDragging = false
+local teamDragStart, teamStartPos
+teamPanel.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1 then
+		teamDragging = true
+		teamDragStart = input.Position
+		teamStartPos = teamPanel.Position
+		input.Changed:Connect(function()
+			if input.UserInputState == Enum.UserInputState.End then
+				teamDragging = false
+			end
+		end)
+	end
+end)
+teamPanel.InputChanged:Connect(function(input)
+	if teamDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+		local delta = input.Position - teamDragStart
+		teamPanel.Position = UDim2.new(teamStartPos.X.Scale, teamStartPos.X.Offset + delta.X, teamStartPos.Y.Scale, teamStartPos.Y.Offset + delta.Y)
+	end
+end)
+local teamPanelOpen = true
+local function toggleTeamPanel(isVisible)
+	local tweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local targetTransparency = isVisible and 0.2 or 1
+	local targetPosition = isVisible and DEFAULT_TEAM_PANEL_POS or OFFSCREEN_TEAM_PANEL_POS
+
+	local tweenTransparency = TweenService:Create(teamPanel, tweenInfo, {BackgroundTransparency = targetTransparency})
+	local tweenPosition = TweenService:Create(teamPanel, tweenInfo, {Position = targetPosition})
+
+	tweenTransparency:Play()
+	tweenPosition:Play()
+end
+local messageGui = Instance.new("ScreenGui")
+messageGui.Name = "WinelessMessageGui"
+messageGui.ResetOnSpawn = false
+messageGui.Parent = playerGui
+local messageFrame = Instance.new("Frame")
+messageFrame.Name = "MessageFrame"
+messageFrame.Size = UDim2.new(0, FRAME_WIDTH, 0, FRAME_HEIGHT)
+messageFrame.AnchorPoint = Vector2.new(1, 1)
+messageFrame.Position = UDim2.new(1.2, 0, 1, -10)
+messageFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+messageFrame.BackgroundTransparency = 0.2
+messageFrame.Parent = messageGui
+local uiCorner = Instance.new("UICorner")
+uiCorner.CornerRadius = UDim.new(0, 5)
+uiCorner.Parent = messageFrame
+local imageLabel = Instance.new("ImageLabel")
+imageLabel.Name = "Logo"
+imageLabel.Size = UDim2.new(0, IMAGE_SIZE, 0, IMAGE_SIZE)
+imageLabel.Position = UDim2.new(0, 10, 0, (FRAME_HEIGHT - IMAGE_SIZE) / 2)
+imageLabel.Image = IMAGE_ID
+imageLabel.BackgroundTransparency = 1
+imageLabel.Parent = messageFrame
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Name = "TitleLabel"
+titleLabel.Size = UDim2.new(1, -IMAGE_SIZE - 20, 0, 30)
+titleLabel.Position = UDim2.new(0, IMAGE_SIZE + 20, 0, 5)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = "Wineless"
+titleLabel.TextColor3 = Color3.new(1, 1, 1)
+titleLabel.TextScaled = true
+titleLabel.Font = Enum.Font.SourceSansBold
+titleLabel.Parent = messageFrame
+local subtitleLabel = Instance.new("TextLabel")
+subtitleLabel.Name = "SubtitleLabel"
+subtitleLabel.Size = UDim2.new(1, -IMAGE_SIZE - 20, 0, 30)
+subtitleLabel.Position = UDim2.new(0, IMAGE_SIZE + 20, 0, 35)
+subtitleLabel.BackgroundTransparency = 1
+subtitleLabel.Text = "Made by kinsroo"
+subtitleLabel.TextColor3 = Color3.new(1, 1, 1)
+subtitleLabel.TextScaled = true
+subtitleLabel.Font = Enum.Font.SourceSans
+subtitleLabel.Parent = messageFrame
+local targetInPosition = UDim2.new(1, -10, 1, -10)
+local tweenInfoIn = TweenInfo.new(TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+local tweenIn = TweenService:Create(messageFrame, tweenInfoIn, {Position = targetInPosition})
+tweenIn:Play()
+delay(TWEEN_TIME + MESSAGE_DURATION, function()
+	local targetOutPosition = UDim2.new(1.2, 0, 1, -10)
+	local tweenOut = TweenService:Create(messageFrame, tweenInfoIn, {Position = targetOutPosition})
+	tweenOut:Play()
+	tweenOut.Completed:Connect(function()
+		messageGui:Destroy()
+	end)
+end)
+local function getDistance(p1, p2)
+	return (p1 - p2).Magnitude
+end
+local function getClosestTarget()
+	local mousePos = UserInputService:GetMouseLocation()
+	local closestTarget = nil
+	local shortestDistance = FOV_RADIUS
+	
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player ~= LocalPlayer then
+			-- Check if the player is ignored individually or by team
+			local isPlayerIgnored = ignoreList[player] or (player.Team and ignoreTeams[player.Team])
+			if not isPlayerIgnored then
+				local character = player.Character
+				local targetPart = character:FindFirstChild(TARGET_PART_NAME)
+				if targetPart and character:FindFirstChild("Humanoid") then
+					local humanoid = character.Humanoid
+					if humanoid.Health > 0 then
+						local screenPos, onScreen = Camera:WorldToViewportPoint(targetPart.Position)
+						if onScreen then
+							local dist = getDistance(Vector2.new(mousePos.X, mousePos.Y), Vector2.new(screenPos.X, screenPos.Y))
+							if dist <= shortestDistance then
+								shortestDistance = dist
+								closestTarget = player
+							end
+						end
+					end
+				end
+			end
+		end
+	end
+	
+	-- Удалена автонаводка на NPC
+	return closestTarget
+end
+local aimTarget = nil
+local isAiming = false
+local aimTargetConnections = {}
+
+local function disconnectAimTargetEvents()
+	for _, conn in ipairs(aimTargetConnections) do
+		if conn then
+			conn:Disconnect()
+		end
+	end
+	aimTargetConnections = {}
+end
+local function cancelAiming()
+	isAiming = false
+	aimTarget = nil
+	disconnectAimTargetEvents()
+end
+function toggleAiming()
+	if isAiming then
+		cancelAiming()
+	else
+		local target = getClosestTarget()
+		if target then
+			isAiming = true
+			aimTarget = target
+			if aimTarget:IsA("Player") then
+				local charRemovingConn = aimTarget.CharacterRemoving:Connect(function(character)
+					cancelAiming()
+				end)
+				local charAddedConn = aimTarget.CharacterAdded:Connect(function(character)
+					cancelAiming()
+				end)
+				table.insert(aimTargetConnections, charRemovingConn)
+				table.insert(aimTargetConnections, charAddedConn)
+			end
+		end
+	end
+end
+local fovCircle = Drawing.new("Circle")
+fovCircle.Visible = true
+fovCircle.NumSides = 150
+fovCircle.Radius = FOV_RADIUS
+fovCircle.Color = FOV_COLOR
+fovCircle.Thickness = 1.5
+fovCircle.Transparency = 1
+local inputBeganConnection = nil
+local renderSteppedConnection = nil
+local function selfDestruct()
+	if inputBeganConnection then
+		inputBeganConnection:Disconnect()
+	end
+	if renderSteppedConnection then
+		renderSteppedConnection:Disconnect()
+	end
+	if fovCircle then
+		pcall(function()
+			fovCircle:Remove()
+		end)
+		fovCircle = nil
+	end
+	if ignorePanelGui then
+		ignorePanelGui:Destroy()
+	end
+	local messageGui = Instance.new("ScreenGui")
+	messageGui.Name = "WinelessMessageGui"
+	messageGui.ResetOnSpawn = false
+	messageGui.Parent = playerGui
+	local messageFrame = Instance.new("Frame")
+	messageFrame.Name = "MessageFrame"
+	messageFrame.Size = UDim2.new(0, FRAME_WIDTH, 0, FRAME_HEIGHT)
+	messageFrame.AnchorPoint = Vector2.new(1, 1)
+	messageFrame.Position = UDim2.new(1.2, 0, 1, -10)
+	messageFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+	messageFrame.BackgroundTransparency = 0.2
+	messageFrame.Parent = messageGui
+	local uiCorner = Instance.new("UICorner")
+	uiCorner.CornerRadius = UDim.new(0, 5)
+	uiCorner.Parent = messageFrame
+	local imageLabel = Instance.new("ImageLabel")
+	imageLabel.Name = "Logo"
+	imageLabel.Size = UDim2.new(0, IMAGE_SIZE, 0, IMAGE_SIZE)
+	imageLabel.Position = UDim2.new(0, 10, 0, (FRAME_HEIGHT - IMAGE_SIZE) / 2)
+	imageLabel.Image = IMAGE_ID
+	imageLabel.BackgroundTransparency = 1
+	imageLabel.Parent = messageFrame
+	local titleLabel = Instance.new("TextLabel")
+	titleLabel.Name = "TitleLabel"
+	titleLabel.Size = UDim2.new(1, -IMAGE_SIZE - 20, 0, 30)
+	titleLabel.Position = UDim2.new(0, IMAGE_SIZE + 20, 0, 5)
+	titleLabel.BackgroundTransparency = 1
+	titleLabel.Text = "Wineless"
+	titleLabel.TextColor3 = Color3.new(1, 1, 1)
+	titleLabel.TextScaled = true
+	titleLabel.Font = Enum.Font.SourceSansBold
+	titleLabel.Parent = messageFrame
+	local subtitleLabel = Instance.new("TextLabel")
+	subtitleLabel.Name = "SubtitleLabel"
+	subtitleLabel.Size = UDim2.new(1, -IMAGE_SIZE - 20, 0, 30)
+	subtitleLabel.Position = UDim2.new(0, IMAGE_SIZE + 20, 0, 35)
+	subtitleLabel.BackgroundTransparency = 1
+	subtitleLabel.Text = "Script destroyed"
+	subtitleLabel.TextColor3 = Color3.new(1, 1, 1)
+	subtitleLabel.TextScaled = true
+	subtitleLabel.Font = Enum.Font.SourceSans
+	subtitleLabel.Parent = messageFrame
+	local targetInPosition = UDim2.new(1, -10, 1, -10)
+	local tweenInfoIn = TweenInfo.new(TWEEN_TIME, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+	local tweenIn = TweenService:Create(messageFrame, tweenInfoIn, {Position = targetInPosition})
+	tweenIn:Play()
+	delay(TWEEN_TIME + MESSAGE_DURATION, function()
+		local targetOutPosition = UDim2.new(1.2, 0, 1, -10)
+		local tweenOut = TweenService:Create(messageFrame, tweenInfoIn, {Position = targetOutPosition})
+		tweenOut:Play()
+		tweenOut.Completed:Connect(function()
+			messageGui:Destroy()
+		end)
+	end)
+	script:Destroy()
+end
+
+local panelsVisible = true -- Track panel visibility
+
+inputBeganConnection = UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed then return end
+	if input.KeyCode == SELF_DESTRUCT_KEY then
+		selfDestruct()
+		return
+	elseif input.KeyCode == AIM_KEY then
+		toggleAiming()
+	elseif input.KeyCode == PANEL_TOGGLE_KEY then
+		panelsVisible = not panelsVisible
+		toggleIgnorePanel(panelsVisible)
+		toggleTeamPanel(panelsVisible)
+	elseif input.KeyCode == PANEL_TOGGLE_TEAM_KEY then
+		toggleTeamPanel(not teamPanelOpen)
+	end
+end)
+
+renderSteppedConnection = RunService.RenderStepped:Connect(function(dt)
+	local mousePos = UserInputService:GetMouseLocation()
+	fovCircle.Position = mousePos
+	local mouseDelta = UserInputService:GetMouseDelta()
+	if mouseDelta.Magnitude > MANUAL_OVERRIDE_THRESHOLD then return end
+	if isAiming and aimTarget then
+		local character = nil
+		if aimTarget:IsA("Player") then
+			character = aimTarget.Character
+		elseif aimTarget:IsA("Model") then
+			character = aimTarget
+		end
+		if not character then
+			cancelAiming()
+			return
+		end
+		local humanoid = character:FindFirstChild("Humanoid")
+		if not humanoid or humanoid.Health <= 0 then
+			cancelAiming()
+			return
+		end
+		local targetPart = character:FindFirstChild(TARGET_PART_NAME)
+		if targetPart then
+			local camPos = Camera.CFrame.Position
+			local targetPosition = targetPart.Position
+			if PREDICTION_ENABLED and aimTarget:IsA("Player") then
+				local hrp = character:FindFirstChild("HumanoidRootPart")
+				if hrp then
+					local velocity = hrp.Velocity
+					velocity = Vector3.new(velocity.X, 0, velocity.Z)
+					if velocity.Magnitude > 0 then
+						local rightVector = hrp.CFrame.RightVector
+						local sideSpeed = velocity:Dot(rightVector)
+						if sideSpeed ~= 0 then
+							local offsetDirection = sideSpeed < 0 and -rightVector or rightVector
+							targetPosition = targetPosition + offsetDirection.Unit * PREDICTION_OFFSET
+						end
+					end
+				end
+			end
+			local targetCFrame = CFrame.new(camPos, targetPosition)
+			if SmoothnessEnabled then
+				local lerpFactor = math.clamp(dt / effectiveSmoothness, 0, 1)
+				Camera.CFrame = Camera.CFrame:Lerp(targetCFrame, lerpFactor)
+			else
+				Camera.CFrame = targetCFrame
+			end
+		end
+	end
+end)
